@@ -2,11 +2,17 @@ import {ethers} from "hardhat";
 import fs from "fs";
 import * as config from "../config";
 import {validateConfig} from "hardhat/internal/core/config/config-validation";
+import {GLP, GMX} from "../typechain-types/gmx";
+import {TimeDistributor, YieldTracker} from "../typechain-types/tokens";
+import {RewardDistributor} from "../typechain-types/staking";
+import {min} from "hardhat/internal/util/bigint";
 async function main() {
+
 
 
     const [signer] = await ethers.getSigners();
 
+    console.log(signer.address)
     const vault = await ethers.deployContract("Vault");
     await vault.waitForDeployment();
     console.log(await vault.getAddress());
@@ -35,7 +41,7 @@ async function main() {
     const setIsAmmEnabled = await vaultPriceFeed.setIsAmmEnabled(false);
     await setIsAmmEnabled.wait();
 
-    const glp = await ethers.deployContract("GLP");
+    const glp = await ethers.deployContract("GLP") as GLP;
     await glp.waitForDeployment()
 
 
@@ -148,12 +154,51 @@ async function main() {
     const  approve = await mockToken.approve(await glpManager.getAddress(), ethers.parseEther("1000000"));
     await approve.wait();
 
+
+    const gmx = await ethers.deployContract("GMX") as GMX;
+    await gmx.waitForDeployment();
+
+    const setMinter = await gmx.setMinter(signer.address, true);
+    await setMinter.wait();
+
+
+
+
+    const yieldTracker = await ethers.deployContract("YieldTracker",[ await glp.getAddress()]) as YieldTracker;
+    await yieldTracker.waitForDeployment();
+
+    const glpSetTracker = await glp.setYieldTrackers([await yieldTracker.getAddress()]);
+    await glpSetTracker.wait();
+
+    const rewardDistributor = await ethers.deployContract("TimeDistributor") as TimeDistributor;
+    await rewardDistributor.waitForDeployment();
+
+
+    const setRewardDistributor = await yieldTracker.setDistributor(await rewardDistributor.getAddress());
+    await setRewardDistributor.wait();
+
+    const setDistribution = await rewardDistributor.setDistribution([await yieldTracker.getAddress()], [0], [await gmx.getAddress()]);
+    await setDistribution.wait();
+    console.log("update last Distribution time success");
+    //TODO
+    const gmxmint = await gmx.mint(await rewardDistributor.getAddress(), ethers.parseEther('10000'));
+    await gmxmint.wait();
+      const setTokenPerInterval = await rewardDistributor.setTokensPerInterval(await yieldTracker.getAddress(), ethers.parseEther('1'));
+      await setTokenPerInterval.wait();
+      console.log("set Token interval success")
+
+
+
+
     const  addLiquidity = await glpManager.addLiquidity(await mockToken.getAddress(), ethers.parseEther('1000'), 0, 0);
     await addLiquidity.wait();
 
     console.log(await glp.balanceOf(signer.address));
     console.log( await glpManager.getAumInUsdg(true));
     console.log( await glpManager.getAumInUsdg(false));
+
+    console.log(await yieldTracker.claimable(signer.address));
+
 
     const decreaseLiquidity = await glpManager.removeLiquidity(await mockToken.getAddress(), ethers.parseEther('10'), 0, signer.address);
     await decreaseLiquidity.wait();
@@ -163,6 +208,11 @@ async function main() {
     console.log(await glp.balanceOf(signer.address));
     console.log( await glpManager.getAumInUsdg(true));
     console.log( await glpManager.getAumInUsdg(false));
+
+    console.log(await yieldTracker.claimable(signer.address));
+
+
+
 
 
 
